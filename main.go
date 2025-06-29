@@ -44,12 +44,15 @@ func (b *Buffer) GetData() []byte {
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintln(os.Stderr, "info <rom-file>                  - display info about rom")
 		fmt.Fprintln(os.Stderr, "ips <rom-file> <patch-file> ...  - apply patches to rom")
 		fmt.Fprintln(os.Stderr, "sha1 <file>                      - calculate sha1")
 		os.Exit(0)
 	}
 
-	if (os.Args[1] == "ips") {
+	if (os.Args[1] == "info") {
+		cmdInfo(os.Args[2])
+	} else if (os.Args[1] == "ips") {
 		if len(os.Args) < 4 {
 			fmt.Fprintln(os.Stderr, "Give patch files as arguments.")
 			os.Exit(1)
@@ -78,7 +81,8 @@ func applyPatch(buffer *Buffer, patch *bytes.Reader) {
 	// Read and verify header
 	header := readData(patch, 5)
 	if len(header) == 0 || string(header) != "PATCH" {
-		panic("Invalid IPS file")
+		fmt.Fprintln(os.Stderr, "Invalid IPS file.")
+		os.Exit(1)
 	}
 
 	for {
@@ -105,6 +109,61 @@ func applyPatch(buffer *Buffer, patch *bytes.Reader) {
 			buffer.WriteBytes(offset, data)
 		}
 	}
+}
+
+func validateHeader(header []byte) bool {
+	// Verify title characters are printable
+	for _, b := range header[0 : 21] {
+		if b < 32 || b > 126 {
+			return false
+		}
+	}
+
+	// Checksum validation
+	checksum := int(header[28]) | (int(header[29]) << 8)
+	complement := int(header[30]) | (int(header[31]) << 8)
+	return (checksum + complement) == 0xffff
+}
+
+func readHeader(romData []byte) (int, []byte) {
+	offsets := []int {
+		0x7fc0, // LoROM
+		0xffc0, // HiROM
+		0x40ffc0, // ExHiROM
+	}
+
+	for _, offset := range offsets {
+		if len(romData) >= (offset + 32) {
+			header := romData[offset : offset + 32]
+			if (validateHeader(header)) {
+				return offset, header
+			}
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "ROM does not contain valid header.")
+	os.Exit(1)
+	return -1, nil // never gets here
+}
+
+func cmdInfo(romFile string) {
+	rom, err := os.ReadFile(romFile)
+	if err != nil {
+		panic(err)
+	}
+
+	_, header := readHeader(rom)
+
+	fmt.Printf("Name: %s\n", string(header[0 : 21]))
+	fmt.Printf("Mode: %02x\n", header[21])
+	fmt.Printf("Chipset: %02x\n", header[22])
+	fmt.Printf("ROM size: %02x (%d KB)\n", header[23], 1 << header[23])
+	fmt.Printf("RAM size: %02x (%d KB)\n", header[24], 1 << header[24])
+	fmt.Printf("Country: %02x\n", header[25])
+	fmt.Printf("Developer: %02x\n", header[26])
+	fmt.Printf("Version: %02x\n", header[27])
+	fmt.Printf("Checksum Complement: %02x%02x\n", header[29], header[28])
+	fmt.Printf("Checksum: %02x%02x\n", header[31], header[30])
 }
 
 func cmdIps(romFile string, patchFiles []string) {
