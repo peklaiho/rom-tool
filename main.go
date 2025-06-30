@@ -44,13 +44,16 @@ func (b *Buffer) GetData() []byte {
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintln(os.Stderr, "del-header <rom-file>            - delete header (512 bytes)")
 		fmt.Fprintln(os.Stderr, "info <rom-file>                  - display info about rom")
 		fmt.Fprintln(os.Stderr, "ips <rom-file> <patch-file> ...  - apply patches to rom")
 		fmt.Fprintln(os.Stderr, "sha1 <file>                      - calculate sha1")
 		os.Exit(0)
 	}
 
-	if (os.Args[1] == "info") {
+	if (os.Args[1] == "del-header") {
+		cmdDelHeader(os.Args[2])
+	} else if (os.Args[1] == "info") {
 		cmdInfo(os.Args[2])
 	} else if (os.Args[1] == "ips") {
 		if len(os.Args) < 4 {
@@ -146,11 +149,27 @@ func readHeader(romData []byte) (int, []byte) {
 	return -1, nil // never gets here
 }
 
+func cmdDelHeader(romFile string) {
+	rom, err := os.ReadFile(romFile)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Deleting header: %s (%x)\n", romFile, sha1.Sum(rom))
+
+	result := rom[512:]
+	resultFile := romFile + "-no-header"
+	fmt.Fprintf(os.Stderr, "Writing result file: %s (%x)\n", resultFile, sha1.Sum(result))
+	os.WriteFile(resultFile, result, 0644)
+}
+
 func cmdInfo(romFile string) {
 	rom, err := os.ReadFile(romFile)
 	if err != nil {
 		panic(err)
 	}
+
+	fmt.Printf("Size: %d (size %% 32KB: %d)\n", len(rom), len(rom) % 32768)
 
 	_, header := readHeader(rom)
 
