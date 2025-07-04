@@ -9,6 +9,13 @@ import (
 	"os"
 )
 
+const MB_HALF = 1024 * 512
+const MB_ONE = MB_HALF * 2
+const MB_TWO = MB_ONE * 2
+const MB_FOUR = MB_ONE * 4
+const MB_EIGHT = MB_ONE * 8
+const MB_SIXTEEN = MB_ONE * 16
+
 // Buffer that wraps a byte array
 type Buffer struct {
 	data []byte
@@ -44,6 +51,7 @@ func (b *Buffer) GetData() []byte {
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintln(os.Stderr, "checksum <rom-file>              - fix the checksum")
 		fmt.Fprintln(os.Stderr, "del-header <rom-file>            - delete header (512 bytes)")
 		fmt.Fprintln(os.Stderr, "info <rom-file>                  - display info about rom")
 		fmt.Fprintln(os.Stderr, "ips <rom-file> <patch-file> ...  - apply patches to rom")
@@ -51,7 +59,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	if (os.Args[1] == "del-header") {
+	if (os.Args[1] == "checksum") {
+		cmdChecksum(os.Args[2])
+	} else if (os.Args[1] == "del-header") {
 		cmdDelHeader(os.Args[2])
 	} else if (os.Args[1] == "info") {
 		cmdInfo(os.Args[2])
@@ -149,6 +159,61 @@ func readHeader(romData []byte) (int, []byte) {
 	return -1, nil // never gets here
 }
 
+func cmdChecksum(romFile string) {
+	rom, err := os.ReadFile(romFile)
+	if err != nil {
+		panic(err)
+	}
+
+	offset, _ := readHeader(rom)
+
+	fmt.Printf("Old checksum in header: %02x%02x\n", rom[offset + 31], rom[offset + 30])
+
+	// Reset the existing complement and checksum
+	rom[offset + 28] = 0xff
+	rom[offset + 29] = 0xff
+	rom[offset + 30] = 0
+	rom[offset + 31] = 0
+
+	var checksum uint16
+	for _, b := range rom {
+		checksum += uint16(b)
+	}
+
+	// If size is not right, we need to calculate part of it again
+	sizeInHeader := (1 << rom[offset + 23]) * 1024
+	if len(rom) == sizeInHeader {
+		fmt.Printf("ROM size matches the size in the header\n")
+	} else if len(rom) > sizeInHeader {
+		fmt.Printf("Error: ROM size is larger than what is defined in the header\n")
+		os.Exit(1)
+	} else {
+		missingBytes := sizeInHeader - len(rom)
+		fmt.Printf("Adding %d missing bytes to the calculation\n", missingBytes)
+
+		for i := (len(rom) - missingBytes); i < len(rom); i++ {
+			checksum += uint16(rom[i])
+		}
+	}
+
+	// Calculate complement
+	complement := ^checksum
+
+	fmt.Printf("Calculated checksum: %04x\n", checksum)
+	fmt.Printf("Calculated complement: %04x\n", complement)
+
+	// Write the checksum back into the ROM
+	rom[offset + 28] = byte(complement)
+	rom[offset + 29] = byte(complement >> 8)
+	rom[offset + 30] = byte(checksum)
+	rom[offset + 31] = byte(checksum >> 8)
+
+	// Write file
+	resultFile := romFile + "-fixed-checksum"
+	fmt.Fprintf(os.Stderr, "Writing result file: %s (%x)\n", resultFile, sha1.Sum(rom))
+	os.WriteFile(resultFile, rom, 0644)
+}
+
 func cmdDelHeader(romFile string) {
 	rom, err := os.ReadFile(romFile)
 	if err != nil {
@@ -169,7 +234,7 @@ func cmdInfo(romFile string) {
 		panic(err)
 	}
 
-	fmt.Printf("Size: %d (size %% 32KB: %d)\n", len(rom), len(rom) % 32768)
+	fmt.Printf("Size: %d (size %% 32KB: %d) (size %% 512KB: %d)\n", len(rom), len(rom) % 32768, len(rom) % MB_HALF)
 
 	_, header := readHeader(rom)
 
